@@ -1,0 +1,28 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/mnt/c/Users/Great/Documents/treinoWSL/progC/topicosC/topicos_comp/atv_1/main.c
+stdio.h
+-
+stdlib.h
+-
+unistd.h
+-
+signal.h
+-
+time.h
+-
+sys/types.h
+-
+sys/inotify.h
+-
+sys/wait.h
+-
+string.h
+-
+

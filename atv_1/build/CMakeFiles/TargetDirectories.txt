@@ -1,0 +1,3 @@
+/mnt/c/Users/Great/Documents/treinoWSL/progC/topicosC/topicos_comp/atv_1/build/CMakeFiles/rebuild_cache.dir
+/mnt/c/Users/Great/Documents/treinoWSL/progC/topicosC/topicos_comp/atv_1/build/CMakeFiles/edit_cache.dir
+/mnt/c/Users/Great/Documents/treinoWSL/progC/topicosC/topicos_comp/atv_1/build/CMakeFiles/main.dir
