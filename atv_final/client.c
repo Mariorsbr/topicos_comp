@@ -38,12 +38,12 @@ void catch_ctrl_c_and_exit(int sig) {
 void send_msg_handler() {
   char message[LENGTH] = {};
   char buffer[LENGTH + 32] = {};
-
+   printf("aki");
   while(1) {
   	str_overwrite_stdout();
     fgets(message, LENGTH, stdin);
     str_trim_lf(message, LENGTH);
-
+    
     if (strcmp(message, "/SAIR") == 0) {
 			break;
     } else {
@@ -59,6 +59,8 @@ void send_msg_handler() {
 
 void recv_msg_handler() {
 	char message[LENGTH] = {};
+    printf("receber aqui");
+    fflush(stdout);
     while (1) {
 		int receive = recv(sockfd, message, LENGTH, 0);
         if (receive > 0) {

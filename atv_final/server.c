@@ -107,17 +107,11 @@ void *handle_client(void *arg){
 
 	cli_count++;
 	client_t *cli = (client_t *)arg;
-
+    printf("aqui");
 	// Nome
-	if(recv(cli->sockfd, name, 32, 0) <= 0 || strlen(name) <  2 || strlen(name) >= 32-1){
-		printf("Nao colocou o nome.\n");
-		leave_flag = 1;
-	} else{
-		strcpy(cli->name, name);
-		sprintf(buff_out, "%s entrou na sala\n", cli->name);
-		printf("%s", buff_out);
-		send_message(buff_out, cli->uid);
-	}
+	
+	strcpy(cli->name, name);
+	sprintf(buff_out, "%s entrou na sala\n", cli->name);
 
 	bzero(buff_out, BUFFER_SZ);
 
