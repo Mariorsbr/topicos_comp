@@ -1,18 +1,20 @@
-#include <unistd.h>
 #include <stdio.h>
-#include <sys/socket.h>
 #include <stdlib.h>
-#include <netinet/in.h>
 #include <string.h>
 #include <signal.h>
-//#include <errno.h>
-#define LOCAL_HOST "127.0.0.1"
-#define LENGTH 2048
-char name[32];
-int sock = 0;
-volatile sig_atomic_t flag = 0;
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <pthread.h>
 
-pthread_mutex_t lock;
+#define LENGTH 2048
+
+// Global variables
+volatile sig_atomic_t flag = 0;
+int sockfd = 0;
+char name[32];
 
 void remove_extra_caracteres(char * str){
     char *ch;                       // used to remove newline
@@ -29,101 +31,105 @@ void remove_extra_caracteres(char * str){
         }
 }
 
-void enviar_msg(){
-    char message[LENGTH] = {};
-    char buffer[LENGTH + 32] = {};         
-    while(1) {
-        printf("%s", "> ");
-        fgets(message, LENGTH, stdin);
-        remove_extra_caracteres(message);
-        fflush(stdout);
-        continue;
-        if ( strcmp(message,"/SAIR") == 0) {
-                break;
-        }
-        else {
-            sprintf(buffer, "%s:%s", name, message);   
-            send(sock, buffer, strlen(buffer), 0);
-        }
-        bzero(message, LENGTH);
-        bzero(buffer, LENGTH + 32);
-   }
+void send_msg() {
+  char message[LENGTH] = {};
+  char buffer[LENGTH + 32] = {};
+   
+  while(1) {
+  	printf("%s", "> ");
+    fflush(stdout);
+    fgets(message, LENGTH, stdin);
+    remove_extra_caracteres(message);
+    
+    if (strcmp(message, "/SAIR") == 0) {
+            flag = 1;
+			break;
+    } else {
+      sprintf(buffer, "%s:%s", name, message);
+      send(sockfd, buffer, strlen(buffer), 0);
+    }
 
-   flag = 1;
+	bzero(message, LENGTH);
+    bzero(buffer, LENGTH + 32);
+  }
+  //catch_ctrl_c_and_exit(2);
 }
 
-void receber_msg(){
-    char message[LENGTH] = {};
-    //printf("receber aqui");
+void receive() {
+	char message[LENGTH] = {};
     fflush(stdout);
     while (1) {
-        if (recv(sock, message, LENGTH, 0)> 0) {
-            printf("%s", "> ");
-            fflush(stdout);
-        } else {
+		int receive = recv(sockfd, message, LENGTH, 0);
+        if (receive > 0) {
+        printf("%s", message);
+        printf("%s", "> ");
+        fflush(stdout);
+        } else if (receive == 0) {
                 break;
-        }
+        } else {
+			// -1
+		}
 		memset(message, 0, sizeof(message));
     }
 }
 
 int main(int argc, char **argv){
+	
+	char *ip = "127.0.0.1";
+    strcpy(name,argv[1]);
+	if (strlen(name) > 32 || strlen(name) < 2){
+		printf("O nome precisa ter menos de 30 caracteres e mais que 2.\n");
+		return EXIT_FAILURE;
+	}
     
-    strcpy(name, argv[1]);
-    int sock = 0, valread;
-    struct sockaddr_in serv_addr;
-    //char *hello = "Hello from client";
-    char buffer[1024] = {0};
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-    {
-        printf("\n Socket creation error \n");
-        return -1;
-    }
-   
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(9999);
-       
-    // Convert IPv4 and IPv6 addresses from text to binary form
-    if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0) 
+	struct sockaddr_in server_addr;
+
+	/* Definições do Socket  */
+	sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(ip);
+    server_addr.sin_port = htons(9999);
+
+    if(inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr)<=0) 
     {
         printf("\nInvalid address/ Address not supported \n");
         return -1;
     }
     
-    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-    {
-        printf("\nConnection Failed \n");
-        return -1;
-    }
-    
-   
-    send(sock,name,32,0);
-    
-    printf("Caso queria sair digite: /SAIR  \n");
-    fflush(stdout);
+    // Conexão com o servidor
+    int err = connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    if (err == -1) {
+		printf("ERROR: connect\n");
+		return EXIT_FAILURE;
+	}
 
-    pthread_t enviar_msg_th;
-    if(pthread_create(&enviar_msg_th, NULL, (void *) enviar_msg,NULL) != 0){
+	// Envia o nome 
+	send(sockfd, name, 32, 0);
+
+	printf("--- Caso queira sair digite: /SAIR)---\n");
+    
+
+	pthread_t send_msg_thread;
+    if(pthread_create(&send_msg_thread, NULL, (void *) send_msg, NULL) != 0){
 		printf("ERROR: pthread\n");
         return EXIT_FAILURE;
 	}
     
-    
-    pthread_t receber_msg_th;
-    if(pthread_create(&receber_msg_th, NULL, (void *) receber_msg, NULL) != 0){
+
+	pthread_t recv_msg_thread;
+    if(pthread_create(&recv_msg_thread, NULL, (void *) receive, NULL) != 0){
 		printf("ERROR: pthread\n");
 		return EXIT_FAILURE;
 	}
-    
-    while(1){
-        if(flag){
-            printf("saindo...");
-            break;
+
+	while (1){
+		if(flag){
+			printf("\nSaindo...\n");
+			break;
         }
-    }
-    
-    close(sock);
+	}
 
-    return EXIT_SUCCESS;
+	close(sockfd);
 
+	return EXIT_SUCCESS;
 }

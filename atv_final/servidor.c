@@ -1,49 +1,40 @@
-#include <unistd.h>
-#include <stdio.h>
 #include <sys/socket.h>
-#include <stdlib.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
 #include <string.h>
 #include <pthread.h>
-//#include <errno.h>
+#include <sys/types.h>
+#include <signal.h>
+
+#define MAX_CLIENTS 4 //permite apenas 3 clientes
+#define BUFFER_SZ 2048
+
 static _Atomic unsigned int cli_count = 0;
-#define LOCAL_HOST "127.0.0.1"
-#define BUFFER 1024
-#define MAX_CLIENTES 2
 static int uid = 10;
 
-pthread_mutex_t lock;
-
+/* Client structure */
 typedef struct{
-    int flag;
-	int socket;
+	struct sockaddr_in address;
+	int sockfd;
 	int uid;
 	char name[32];
 } client_t;
 
-client_t *clients[50];
+client_t *clients[MAX_CLIENTS];
 
-void remove_extra_caracteres(char * str){
-    char *ch;                       
-    char c;    
-    ch = str;
-    while (*ch != '\n' &&  *ch != '\0') {
-            ++ch;
-        }
-        if (*ch) {
-            *ch = '\0';
-        } else {         // remove any extra characters in input stream
-            while ((c = getchar()) != '\n' && c != EOF)
-                continue;
-        }
-}
+pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void send_message(char *s, int uid){
-	pthread_mutex_lock(&lock);
+	pthread_mutex_lock(&clients_mutex);
 
-	for(int i=0; i<MAX_CLIENTES; ++i){
+	for(int i=0; i<MAX_CLIENTS; ++i){
 		if(clients[i]){
 			if(clients[i]->uid != uid){
-				if(write(clients[i]->socket, s, strlen(s)) < 0){
+				if(write(clients[i]->sockfd, s, strlen(s)) < 0){
 					perror("ERROR: write to descriptor failed");
 					break;
 				}
@@ -51,140 +42,130 @@ void send_message(char *s, int uid){
 		}
 	}
 
-	pthread_mutex_unlock(&lock);
-}
-void *fila(void *arg){
-    printf("fila");
-    fflush(stdout);
-    cli_count ++;
-    int flag = 0;
-	char msgBuff[2048];
-    char msgName[32];
-    char * message;
-    client_t *cliente = (client_t *)arg;
-    //printf("receber certo");
-    fflush(stdout);
-    //recv(cliente->socket, msgName, 32,0);
-    recv(cliente->socket, msgBuff, 2048,0);
-    remove_extra_caracteres(msgBuff);
-    printf(msgBuff);
-    //enviar_msg_clientes(msgBuff,cliente->socket);
-    
-    strcpy(cliente->name,msgName);
-    
-    printf("%s é o numero %d da fila", cliente->name,cli_count);
-    fflush(stdout);
+	pthread_mutex_unlock(&clients_mutex);
 }
 
-void *receber(void *arg)
-{
-    pthread_mutex_lock(&lock); 
-    //cli_count ++;
-    int flag = 0;
-	char msgBuff[2048];
-    char msgName[32];
-    char * message;
-    client_t *cliente = (client_t *)arg;
+void *communication(void *arg){
+	char buff_out[BUFFER_SZ];
+	char name[32];
+	int leave_flag = 0;
 
-    recv(cliente->socket, msgName, 32, 0);
-    strcpy(cliente->name, msgName);
-    printf("\n%s entrou na sala",msgName);
-    fflush(stdout);
+	cli_count++;
+	client_t *cli = (client_t *)arg;
+	
+    if(recv(cli->sockfd, name, 32, 0)>0){
+        strcpy(cli->name, name);
+		sprintf(buff_out, "%s entrou na sala\n", cli->name);
+		printf("%s", buff_out);
+    }
+	
 	while(1){
-		if (flag == 1) {
+		if (leave_flag) {
 			break;
 		}
 
-		int msg_recv = recv(cliente->socket, msgBuff, 2048, 0);
-		if (msg_recv>0){
-			//printf("%s", msgBuff);
-			send_message(msgBuff, cliente->uid);
-            remove_extra_caracteres(msgBuff);
-            printf("%s -> %s\n", msgBuff, cliente->name);
-			
-		}
-        if ( strcmp(msgBuff, "/ENTRAR") == 0){
-            message = "Seja bem vindo";
-            write(cliente->socket,message, 2048);
-        } else {
+		int receive = recv(cli->sockfd, buff_out, BUFFER_SZ, 0);
+		if (receive > 0){
+			if(strlen(buff_out) > 0){
+				send_message(buff_out, cli->uid);
+                for (int i = 0; i<BUFFER_SZ; i++){
+                     if( buff_out[i] == '\n'){
+                         buff_out[i] = '\0';
+                     }
+                }
+				printf("%s -> %s\n", buff_out, cli->name);
+			}
+		} else if (receive == 0 || strcmp(buff_out, "/SAIR") == 0){
+			sprintf(buff_out, "%s saiu\n", cli->name);
+			printf("%s", buff_out);
+			send_message(buff_out, cli->uid);
+			leave_flag = 1;
+		} else {
 			printf("ERROR: -1\n");
-            fflush(stdout);
-			flag = 1;
+			leave_flag = 1;
 		}
-        
-        fflush(stdout);
-		bzero(msgBuff, 2048);
+
+		bzero(buff_out, BUFFER_SZ);
 	}
-	pthread_mutex_unlock(&lock); 
-    pthread_exit(NULL);  
-}	
+	close(cli->sockfd);
+    pthread_mutex_lock(&clients_mutex);
+    cli = NULL;
+    free(cli);
+    cli_count--;
+    pthread_mutex_unlock(&clients_mutex);
+    pthread_detach(pthread_self());
+
+	return NULL;
+}
 
 int main(){
-    
-    int sockfd, new_socket, valread;  
-    int opt = 1;
-    char msg[BUFFER];
-    struct sockaddr_in endLoc;
-    int addrlen = sizeof(endLoc);
-    //struct sockaddr_in client_addr;
+
+	char *ip = "127.0.0.1";
+	//int port = atoi(argv[1]);
+	int option = 1;
+	int listenfd = 0, connfd = 0;
+
+    struct sockaddr_in serv_addr;
+    struct sockaddr_in cli_addr;
     pthread_t tid;
-    
-    
-    if ( (sockfd = socket(AF_INET , SOCK_STREAM, 0) ) == 0){
-        perror("socket failed");
-        exit(EXIT_FAILURE);
-    }
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,
-                                                  &opt, sizeof(opt)))
-    {
-        perror("setsockopt");
-        exit(EXIT_FAILURE);
-    }
-    memset(&endLoc,'\0', sizeof(endLoc));
-    endLoc.sin_family = AF_INET;
-	endLoc.sin_addr.s_addr = inet_addr("127.0.0.1");
-	endLoc.sin_port = htons(9999);
 
-    if(bind(sockfd, (struct sockaddr*)&endLoc, sizeof(endLoc)) < 0 ){
-        perror("error na função bind()");
-        exit(EXIT_FAILURE);
-    }
-    
-    if(listen(sockfd , 1) < 0){
-        perror("listen");
-        exit(EXIT_FAILURE);
+    /* Definições do Socket  -- AF_INET = ipV4, SOCK_STREAM = TCP */ 
+    listenfd = socket(AF_INET, SOCK_STREAM, 0);
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = inet_addr(ip);
+    serv_addr.sin_port = htons(9999);
+
+    /* Ignore pipe signals */
+	signal(SIGPIPE, SIG_IGN);
+
+	if(setsockopt(listenfd, SOL_SOCKET,(SO_REUSEPORT | SO_REUSEADDR),(char*)&option,sizeof(option)) < 0){
+		perror("ERROR: setsockopt failed");
+    return EXIT_FAILURE;
+	}
+
+	/* Bind */
+    if(bind(listenfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+        perror("ERROR: Socket binding failed");
+        return EXIT_FAILURE;
     }
 
-    //printf("Bem vindo");
-    fflush(stdout);
-    while(1){
-        
-        if ((new_socket = accept(sockfd, (struct sockaddr *)&endLoc, 
-                       (socklen_t*) &addrlen  ))<0)
-        {
+    /* Listen */
+    if (listen(listenfd, 10) < 0) {
+    perror("ERROR: Socket listening failed");
+    return EXIT_FAILURE;
+	}
+
+	while(1){
+		socklen_t clilen = sizeof(cli_addr);
+		connfd = accept(listenfd, (struct sockaddr*)&cli_addr, &clilen);
+        if(connfd<0){
             perror("accept");
             exit(EXIT_FAILURE);
         }
-         if((cli_count + 1) == MAX_CLIENTES){
+		/* Checagem do numero de clientes*/
+        pthread_mutex_lock(&clients_mutex);
+		if((cli_count + 1) == MAX_CLIENTS){
 			printf("Sem vaga para mais clientes. Recusado: ");
-			close(new_socket);
+			close(connfd);
 			continue;
 		}
-        client_t *cli;
-        cli->flag = 0;
-        cli->socket = new_socket;
+        pthread_mutex_unlock(&clients_mutex);
+		/* Client settings */
+		client_t *cli = (client_t *)malloc(sizeof(client_t));
+		cli->address = cli_addr;
+		cli->sockfd = connfd;
 		cli->uid = uid++;
-        
-        
-        //pthread_create(&tid[0], NULL, &fila, (void*)cli);
-        //pthread_join(tid[0],NULL);
-        pthread_create(&tid, NULL, &receber, (void*)cli);
-        //pthread_join(tid,NULL);
-        sleep(1);
-       // fila(new_socket);
-       
 
-    }
-    
-    return EXIT_SUCCESS;
+        for(int i=0; i<MAX_CLIENTS; i++){
+            if(!clients[i] ){
+                clients[i]= cli;
+                break;
+            }
+        }
+		pthread_create(&tid, NULL, &communication, (void*)cli);
+		/* Reduce CPU usage */
+		sleep(1);
+	}
+
+	return EXIT_SUCCESS;
 }
